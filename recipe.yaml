@@ -1,6 +1,9 @@
 main:
   params: [input]
   steps:
+    - init:
+        assign:
+          - recipe_id: ${uuid.generate()}
     - call_gemini:
         call: googleapis.aiplatform.v1.projects.locations.endpoints.generateContent
         args:
@@ -29,6 +32,9 @@ main:
                   recipe_description:
                     type: string
                     description: The recipe description.
+                  recipe_image_prompt:
+                    type: string
+                    description: The prompt to generate the recipe image.
                   ingredients:
                     type: array
                     items:
@@ -49,16 +55,30 @@ main:
                 required:
                   - recipe_title
                   - recipe_description
+                  - recipe_image_prompt
         result: gemini_response
     - parse_json_recipe:
         assign:
           - parsed_recipe: '${json.decode(gemini_response.candidates[0].content.parts[0].text)}'
+          - recipe_image_prompt: '${parsed_recipe.recipe_image_prompt}'
+          - usage_metadata: ${gemini_response.usageMetadata}
     - upload_recipe_to_gcs:
         call: googleapis.storage.v1.objects.insert
         args:
           bucket: "doit-llm"
           uploadType: "media"
-          name: ${"recipes/" + uuid.generate() + ".json"}
+          name: ${"recipes/" + recipe_id + ".json"}
           body:   '${json.encode(parsed_recipe)}'
+    - generate_image:
+        call: http.post
+        args:
+          url: "https://image-generation-xgdxnb6fdq-uc.a.run.app"
+          body:
+            uuid: ${recipe_id}
+            prompt: ${recipe_image_prompt}
+        result: image_generation_response
     - returnStep:
-        return: ${gemini_response.candidates[0].content.parts[0].text}
+        return:
+          recipe: ${parsed_recipe}
+          image_generation_response: ${image_generation_response}
+          usage_metadata: ${usage_metadata}
